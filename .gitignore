@@ -1,0 +1,10 @@
+.DS_Store
+.env
+.tooling/
+.uv-cache/
+.venv/
+.temporal/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
