@@ -35,10 +35,10 @@ from agents.shared import (
 )
 
 BOX_AI_DIGEST_PROMPT = """
-Compare the externally researched market report with the internal campaign documents supplied in
-this request. Produce a decision brief that clearly distinguishes public evidence from internal
-observations. Identify where they align, where they conflict, and what the distributor should
-validate next.
+Compare the externally researched market report with the internal Box context supplied in this
+request. Produce a decision brief that clearly distinguishes public evidence from internal
+observations. Identify where they align, where they conflict, and what the team should validate
+next.
 
 Return valid JSON only, with these keys:
 - executiveDigest: concise combined summary for a senior decision-maker
@@ -51,8 +51,16 @@ Return valid JSON only, with these keys:
 - confidenceNotes: concise assessment of evidence strength and limitations
 - followUpQuestions: list of useful next research questions
 
-Use only the supplied Box files. Preserve uncertainty and do not invent claims. Cite the source
-files used for each conclusion.
+Use only the supplied evidence. Preserve uncertainty and do not invent claims. Cite the Box source
+files used for internal conclusions.
+"""
+
+BOX_AI_HUB_CONTEXT_PROMPT = """
+The Box item in this request is a curated internal Box Hub. Use the Hub as the source of internal
+evidence. The external report is supplied below as prompt context because Box AI requires a Hub to
+be the only item in a Hub request. Treat the external report as public evidence, not as Hub content.
+Box citations will ground the internal observations; external citations remain in the published
+master report and source manifest.
 """
 
 
@@ -169,27 +177,64 @@ def _coerce_answer(value: Any) -> dict[str, Any]:
 def _box_ai_file_ids(request: BoxAIReviewRequest) -> list[str]:
     file_ids = list(dict.fromkeys([request.report_file_id, *request.internal_file_ids]))
     if len(file_ids) < 2:
-        raise ValueError("Box AI review requires the generated report and internal Box content")
+        raise ValueError("File-based Box AI review requires at least one internal Box file")
     if len(file_ids) > 25:
         raise ValueError("Box AI review supports at most 25 files")
     return file_ids
 
 
-def _analyze_with_box_ai_sync(request: BoxAIReviewRequest) -> BoxAIDigest:
-    client = _box_client()
-    prompt = f"""
-BUSINESS RESEARCH QUESTION:
-{request.research_question}
+def _bounded_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    suffix = "\n\n[Context shortened to fit the Box AI prompt limit.]"
+    return value[: max_chars - len(suffix)].rstrip() + suffix
 
-{BOX_AI_DIGEST_PROMPT}
-"""
-    response = client.ai.create_ai_ask(
+
+def _box_ai_request(
+    request: BoxAIReviewRequest,
+) -> tuple[CreateAiAskMode, str, list[AiItemAsk]]:
+    """Build a Box AI request while keeping a Hub as the request's only Box item."""
+    research_question = _bounded_text(request.research_question, 2_000)
+    prompt_parts = [
+        f"BUSINESS RESEARCH QUESTION:\n{research_question}",
+        BOX_AI_DIGEST_PROMPT,
+    ]
+
+    if request.internal_hub_id:
+        prompt_parts.extend(
+            [
+                BOX_AI_HUB_CONTEXT_PROMPT,
+                "EXTERNAL RESEARCH REPORT:\n" + _bounded_text(request.report_text, 5_000),
+            ]
+        )
+        return (
+            CreateAiAskMode.SINGLE_ITEM_QA,
+            "\n\n".join(prompt_parts),
+            [
+                AiItemAsk(
+                    id=request.internal_hub_id,
+                    type=AiItemAskTypeField.HUBS,
+                )
+            ],
+        )
+
+    return (
         CreateAiAskMode.MULTIPLE_ITEM_QA,
-        prompt,
+        "\n\n".join(prompt_parts),
         [
             AiItemAsk(id=file_id, type=AiItemAskTypeField.FILE)
             for file_id in _box_ai_file_ids(request)
         ],
+    )
+
+
+def _analyze_with_box_ai_sync(request: BoxAIReviewRequest) -> BoxAIDigest:
+    client = _box_client()
+    mode, prompt, items = _box_ai_request(request)
+    response = client.ai.create_ai_ask(
+        mode,
+        prompt,
+        items,
         include_citations=True,
     )
     if response is None:

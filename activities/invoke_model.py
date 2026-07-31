@@ -1,11 +1,18 @@
 import importlib
 from typing import Annotated, Any, Generic, TypeVar, cast
 
-from openai import AsyncOpenAI
+from openai import (
+    AsyncOpenAI,
+    AuthenticationError,
+    BadRequestError,
+    NotFoundError,
+    PermissionDeniedError,
+)
 from pydantic import BaseModel
 from pydantic.functional_serializers import PlainSerializer
 from pydantic.functional_validators import BeforeValidator
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -78,8 +85,15 @@ async def invoke_model(request: InvokeModelRequest[T]) -> InvokeModelResponse[T]
     if request.tools:
         kwargs["tools"] = request.tools
 
-    # Use responses API consistently
-    resp = await client.responses.parse(**kwargs)
+    # Use Responses API consistently. Configuration errors should not consume retry attempts.
+    try:
+        resp = await client.responses.parse(**kwargs)
+    except (AuthenticationError, BadRequestError, NotFoundError, PermissionDeniedError) as exc:
+        raise ApplicationError(
+            str(exc),
+            type(exc).__name__,
+            non_retryable=True,
+        ) from exc
 
     if request.response_format:
         # Convert structured response to dict for managed serialization.

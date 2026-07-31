@@ -4,8 +4,9 @@
 
 The Global Signal Desk turns one research question into a cited external-research report,
 multilingual executive briefs, a machine-readable source manifest, and a Box AI decision brief
-that compares the report with explicitly selected internal Box files. Temporal coordinates the
-long-running process and publishes every generated artifact into a configured Box folder.
+that compares the report with deliberately selected internal Box context: either explicit files or
+one curated Box Hub. Temporal coordinates the long-running process and publishes every generated
+artifact into a configured Box folder.
 
 Research languages and output languages are configured separately. The first controls which
 local-language evidence the query plan must cover; the second controls which localized briefs are
@@ -24,15 +25,15 @@ flowchart LR
     S --> R["Cited master report"]
     R --> L["Localized executive briefs"]
     L --> B["Publish research pack to Box"]
-    I["Selected internal Box files"] --> A["Box AI comparison with citations"]
+    I["Selected Box files or one Box Hub"] --> A["Box AI comparison with citations"]
     B --> A
     A --> D["Shared institutional knowledge"]
 ```
 
 The OpenAI Responses API performs planning, structured generation, hosted web search, synthesis,
-and localization. Box AI then compares the uploaded external report with the internal Box file IDs
-configured for the run. Internal file content stays in Box; the final digest separates external
-signals, internal observations, alignments, tensions, actions, and citations.
+and localization. Box AI then compares the external report with the internal Box source configured
+for the run. Internal content stays in Box; the final digest separates external signals, internal
+observations, alignments, tensions, actions, and citations.
 
 Each run writes files like these into the destination folder:
 
@@ -54,6 +55,7 @@ global-signal-20260722-143000-a1b2c3d4--box-ai-digest.md
 - [Temporal CLI](https://docs.temporal.io/cli)
 - An OpenAI API key with access to the configured models and web search
 - A Box account with Box AI available
+- Box Hubs access if you choose Hub mode
 - A Box Platform App allowed to read/write content and use Box AI
 
 ## 1. Configure OpenAI
@@ -84,8 +86,12 @@ The quickest local path uses a short-lived Box developer token:
 5. On the app's **Configuration** page, generate a developer token.
 6. In Box, create a folder named `Global Signal Desk`.
 7. Open that folder and copy its numeric ID from the URL.
-8. Select 1–24 existing internal Box files that the authenticated identity may read, and copy their
-   numeric file IDs. The project does not discover, create, or broaden access to internal content.
+8. Choose exactly one internal-context mode:
+   - Select 1–24 existing Box files and copy their numeric file IDs, or
+   - Select one existing Box Hub and copy its numeric ID from the Hub URL.
+
+The project does not discover or create internal content, alter the selected Hub, or broaden access.
+The authenticated identity must already be able to read every selected file or the Hub.
 
 The identity associated with the developer token must be able to upload to that folder and use
 Box AI. Developer tokens normally expire after about 60 minutes; generate a fresh one when the
@@ -107,7 +113,18 @@ OPENAI_API_KEY=your_openai_api_key
 BOX_DEVELOPER_TOKEN=your_short_lived_box_developer_token
 BOX_FOLDER_ID=your_global_signal_desk_folder_id
 BOX_INTERNAL_FILE_IDS=first_internal_file_id,second_internal_file_id
+BOX_INTERNAL_HUB_ID=
 ```
+
+For Hub mode, leave `BOX_INTERNAL_FILE_IDS` empty and set:
+
+```dotenv
+BOX_INTERNAL_FILE_IDS=
+BOX_INTERNAL_HUB_ID=your_existing_hub_id
+```
+
+Exactly one of these two internal-context variables must be set. You can override the configured
+choice for one run with `--internal-file-ids ...` or `--internal-hub-id ...`.
 
 The project never prints credential values. `.env` is excluded from Git.
 
@@ -143,7 +160,7 @@ uv run python -m worker
 
 ```bash
 uv run python -m start_workflow \
-  "Research current local-language industry publications, national film institute reports, festival programs, cinema association data, and platform research to compare how audiences in France, Japan, Brazil, and Poland discover independent films. Assess the roles of festivals, theatrical release, streaming platforms, critics, creators, and social communities. The final Box AI decision brief must compare this external evidence with the distributor's internal Box campaign retrospectives and market plans, clearly distinguishing public findings from internal context. Identify evidence gaps and implications for market-specific release strategies." \
+  "Research current local-language industry publications, national film institute reports, festival programs, cinema association data, and platform research to compare how audiences in France, Japan, Brazil, and Poland discover independent films. Assess the roles of festivals, theatrical release, streaming platforms, critics, creators, and social communities. The final Box AI decision brief must compare this external evidence with the internal Box context selected for this project—either explicit files or a curated Box Hub—clearly distinguishing public findings from internal context. Identify evidence gaps and implications for market-specific release strategies." \
   --industry creative-industries \
   --research-languages French Japanese Portuguese Polish \
   --languages English French Japanese Portuguese Polish
@@ -181,26 +198,34 @@ regulatory, or legal advice.
 Box AI is an explicit internal-context workflow stage:
 
 1. Temporal uploads the master report to Box.
-2. The worker calls Box AI Ask with that report plus the explicitly configured internal file IDs.
-3. Box AI analyzes those files server-side and returns citations.
+2. The worker calls Box AI Ask using the configured internal-context mode.
+3. Box AI analyzes the selected files or Hub server-side and returns citations.
 4. Temporal receives a combined decision brief that distinguishes external and internal evidence.
 5. The worker publishes `box-ai-digest.md` beside the research report.
 
-Box AI Ask accepts at most 25 files in this mode, so the demo allows one generated report plus up
-to 24 internal files. A Box Hub can support a larger curated knowledge collection, but Hub querying
-is not implemented by this repository.
+The two modes use the Box AI API differently:
 
-If the app lacks **Manage AI**, the account lacks Box AI access, or the authenticated identity
-cannot read the uploaded report, the workflow stops at the Box AI stage with a visible Activity
-error in Temporal Web.
+- **Selected files:** one multi-item request contains the generated report plus up to 24 internal
+  files, matching Box AI's 25-file request limit.
+- **Box Hub:** Box AI requires a Hub to be the only item in the request. The Activity therefore
+  sends the Hub as one `type="hubs"` item and includes a bounded external-report excerpt in the
+  prompt. The complete external report and its citations remain available in the published master
+  report and source manifest; Box AI citations in this mode ground the internal Hub evidence.
+
+The project never adds the generated report to the Hub, so choosing Hub mode does not change Hub
+membership or expose the report to Hub collaborators.
+
+If the app lacks **Manage AI**, the account lacks Box AI or Hubs access, or the authenticated
+identity cannot read the configured content, the workflow stops at the Box AI stage with a visible
+Activity error in Temporal Web.
 
 ## Retry and data behavior
 
 - Box uploads use deterministic names based on the Temporal Workflow ID.
 - An Activity retry updates the existing Box file as a new version instead of creating a duplicate.
 - Box credentials are loaded only by Activities and do not enter Temporal Workflow history.
-- Internal file IDs enter Workflow history, but the internal file bodies do not. Box AI reads the
-  files within Box.
+- Selected file IDs or the Hub ID enter Workflow history, but internal content bodies do not. Box
+  AI reads that content within Box.
 - Report content and research results do enter Workflow history in this educational implementation.
   For large or sensitive production reports, use encrypted payloads or Temporal's external payload
   storage pattern and pass references rather than full documents.
@@ -243,6 +268,7 @@ tests/
 - [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
 - [Box file uploads](https://developer.box.com/reference/post-files-content)
 - [Box AI Ask API](https://developer.box.com/reference/post-ai-ask)
+- [Box Hubs](https://developer.box.com/guides/hubs-api/)
 - [Box Python SDK](https://developer.box.com/guides/tooling/sdks/python)
 
 ## Attribution

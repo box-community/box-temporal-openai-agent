@@ -18,9 +18,9 @@ DEFAULT_QUERY = (
     "in France, Japan, Brazil, and Poland discover independent films. Assess the roles of "
     "festivals, theatrical release, streaming platforms, critics, creators, and social "
     "communities. The final Box AI decision brief must compare this external evidence with the "
-    "distributor's internal Box campaign retrospectives and market plans, clearly distinguishing "
-    "public findings from internal context. Identify evidence gaps and implications for "
-    "market-specific release strategies."
+    "internal Box context selected for this project—either explicit files or a curated Box Hub—"
+    "clearly distinguishing public findings from internal context. Identify evidence gaps and "
+    "implications for market-specific release strategies."
 )
 
 
@@ -46,10 +46,15 @@ def parse_args() -> argparse.Namespace:
         default=["English", "French", "Japanese", "Portuguese", "Polish"],
         help="Languages for the executive briefs.",
     )
-    parser.add_argument(
+    internal_context = parser.add_mutually_exclusive_group()
+    internal_context.add_argument(
         "--internal-file-ids",
         nargs="+",
         help="Internal Box file IDs. Defaults to comma-separated BOX_INTERNAL_FILE_IDS.",
+    )
+    internal_context.add_argument(
+        "--internal-hub-id",
+        help="Internal Box Hub ID. Defaults to BOX_INTERNAL_HUB_ID.",
     )
     parser.add_argument(
         "--industry",
@@ -71,11 +76,23 @@ async def main() -> None:
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     workflow_id = args.workflow_id or f"global-signal-{timestamp}-{uuid.uuid4().hex[:8]}"
+
+    if args.internal_file_ids is not None:
+        internal_file_ids = args.internal_file_ids
+        internal_hub_id = None
+    elif args.internal_hub_id is not None:
+        internal_file_ids = []
+        internal_hub_id = args.internal_hub_id
+    else:
+        internal_file_ids = _configured_internal_file_ids()
+        internal_hub_id = os.getenv("BOX_INTERNAL_HUB_ID")
+
     request = ResearchRequest(
         query=args.query,
         research_languages=args.research_languages,
         output_languages=args.languages,
-        internal_box_file_ids=args.internal_file_ids or _configured_internal_file_ids(),
+        internal_box_file_ids=internal_file_ids,
+        internal_box_hub_id=internal_hub_id,
         industry=args.industry,
     )
 
@@ -83,7 +100,10 @@ async def main() -> None:
     print(f"Research question: {request.query}")
     print(f"Research languages: {', '.join(request.research_languages)}")
     print(f"Brief languages: {', '.join(request.output_languages)}")
-    print(f"Internal Box sources: {len(request.internal_box_file_ids)} file(s)")
+    if request.internal_box_hub_id:
+        print(f"Internal Box source: Hub {request.internal_box_hub_id}")
+    else:
+        print(f"Internal Box sources: {len(request.internal_box_file_ids)} file(s)")
 
     result = await client.execute_workflow(
         DeepResearchWorkflow.run,

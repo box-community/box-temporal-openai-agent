@@ -93,7 +93,9 @@ class DeepResearchWorkflow:
             "analyze_with_box_ai",
             BoxAIReviewRequest(
                 report_file_id=pack.report.id,
+                report_text=formatted_report,
                 internal_file_ids=request.internal_box_file_ids,
+                internal_hub_id=request.internal_box_hub_id,
                 research_question=request.query,
             ),
             result_type=BoxAIDigest,

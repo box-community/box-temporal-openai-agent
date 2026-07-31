@@ -137,7 +137,12 @@ async def mock_publish_research_pack(
 @activity.defn(name="analyze_with_box_ai")
 async def mock_analyze_with_box_ai(request: BoxAIReviewRequest) -> BoxAIDigest:
     assert request.report_file_id == "1001"
-    assert request.internal_file_ids == ["2001", "2002"]
+    assert request.report_text.startswith("# Global Signal Desk Research Report")
+    if request.internal_hub_id:
+        assert request.internal_hub_id == "9001"
+        assert request.internal_file_ids == []
+    else:
+        assert request.internal_file_ids == ["2001", "2002"]
     assert "internal Box" in request.research_question
     return BoxAIDigest(
         answer={
@@ -166,7 +171,15 @@ async def mock_publish_box_ai_digest(request: PublishDigestRequest) -> BoxFileRe
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(30)
-async def test_global_signal_desk_workflow() -> None:
+@pytest.mark.parametrize(
+    "internal_context",
+    [
+        {"internal_box_file_ids": ["2001", "2002"]},
+        {"internal_box_hub_id": "9001"},
+    ],
+    ids=["selected-files", "box-hub"],
+)
+async def test_global_signal_desk_workflow(internal_context: dict[str, object]) -> None:
     async with await WorkflowEnvironment.start_time_skipping(
         data_converter=pydantic_data_converter
     ) as env:
@@ -190,10 +203,13 @@ async def test_global_signal_desk_workflow() -> None:
                     ),
                     research_languages=["French", "Japanese"],
                     output_languages=["English", "Polish"],
-                    internal_box_file_ids=["2001", "2002"],
                     industry="financial-services",
+                    **internal_context,
                 ),
-                id="test-global-signal-desk",
+                id=(
+                    "test-global-signal-desk-"
+                    + ("hub" if "internal_box_hub_id" in internal_context else "files")
+                ),
                 task_queue=TASK_QUEUE,
                 run_timeout=timedelta(seconds=30),
             )
